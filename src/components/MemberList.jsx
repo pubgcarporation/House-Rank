@@ -1,16 +1,8 @@
 import { PAGE } from "@/lib/api";
-import { fmt, staffBadge, tierOf } from "@/lib/tiers";
+import { fmt, houseBadge, staffBadge, tierOf } from "@/lib/tiers";
 
 const row =
   "grid grid-cols-[40px_44px_minmax(0,1.3fr)_minmax(0,1fr)_110px] items-center gap-4 max-md:grid-cols-[28px_36px_minmax(0,1fr)_auto] max-md:gap-2.5";
-
-function Badge({ color }) {
-  return (
-    <svg width="11" height="13" viewBox="0 0 12 14" className="shrink-0">
-      <path d="M6 0.6 11.2 7 6 13.4 0.8 7Z" fill={color} />
-    </svg>
-  );
-}
 
 function nums(cur, last) {
   const out = [];
@@ -92,6 +84,7 @@ export default function MemberList({ members, page, total, onPage }) {
         {members.map((m) => {
           const t = tierOf(m);
           const staff = staffBadge(m);
+          const pin = houseBadge(m);
           return (
             <li key={m.id} className={`${row} border-b border-line py-3.5`}>
               <span className={`text-[13px] tabular-nums ${m.rank <= 3 ? "font-semibold text-ink" : "text-mute"}`}>
@@ -107,10 +100,9 @@ export default function MemberList({ members, page, total, onPage }) {
               <div className="min-w-0">
                 <strong className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
                   <span className="truncate">{m.name}</span>
-                  {staff?.pictureUrl && (
-                    <img src={staff.pictureUrl} alt="" title={staff.name} className="size-4 shrink-0 object-contain" />
+                  {pin?.pictureUrl && (
+                    <img src={pin.pictureUrl} alt="" title={pin.name} className="size-4 shrink-0 object-contain" />
                   )}
-                  {t.n > 0 && <Badge color={t.color} />}
                 </strong>
                 <em className="mt-0.5 block truncate text-[13px] not-italic text-mute">
                   {m.headline || m.position || "—"}

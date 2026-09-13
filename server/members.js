@@ -51,17 +51,18 @@ export function query({ q = "", tier = "all", offset = 0, limit = 100 }) {
   };
 }
 
-export function handleMembersApi(req, res, next) {
-  const pathOnly = req.url.split("?")[0];
-  if (pathOnly !== "/api/members") return next();
-  const url = new URL(req.url, "http://localhost");
-  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 100));
-  const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
-  res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(query({
+export function fromUrl(urlStr) {
+  const url = new URL(urlStr, "http://localhost");
+  return {
     q: url.searchParams.get("q") || "",
     tier: url.searchParams.get("tier") || "all",
-    offset,
-    limit,
-  })));
+    offset: Math.max(0, Number(url.searchParams.get("offset")) || 0),
+    limit: Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 100)),
+  };
+}
+
+export function handleMembersApi(req, res, next) {
+  if (req.url.split("?")[0] !== "/api/members") return next();
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(query(fromUrl(req.url))));
 }

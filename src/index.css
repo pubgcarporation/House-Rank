@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", sans-serif;
+  --color-bg: #f7f7f7;
+  --color-ink: #1e1d29;
+  --color-mute: #656b76;
+  --color-line: #e5e7eb;
+  --color-acc: #2f578c;
+}
+
+html, body, #root {
+  @apply min-h-full;
+}
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+}

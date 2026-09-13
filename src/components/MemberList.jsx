@@ -1,5 +1,5 @@
 import { PAGE } from "@/lib/api";
-import { fmt, tierOf } from "@/lib/tiers";
+import { fmt, staffBadge, tierOf } from "@/lib/tiers";
 
 const row =
   "grid grid-cols-[40px_44px_minmax(0,1.3fr)_minmax(0,1fr)_110px] items-center gap-4 max-md:grid-cols-[28px_36px_minmax(0,1fr)_auto] max-md:gap-2.5";
@@ -91,6 +91,7 @@ export default function MemberList({ members, page, total, onPage }) {
       <ol>
         {members.map((m) => {
           const t = tierOf(m);
+          const staff = staffBadge(m);
           return (
             <li key={m.id} className={`${row} border-b border-line py-3.5`}>
               <span className={`text-[13px] tabular-nums ${m.rank <= 3 ? "font-semibold text-ink" : "text-mute"}`}>
@@ -106,6 +107,9 @@ export default function MemberList({ members, page, total, onPage }) {
               <div className="min-w-0">
                 <strong className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
                   <span className="truncate">{m.name}</span>
+                  {staff?.pictureUrl && (
+                    <img src={staff.pictureUrl} alt="" title={staff.name} className="size-4 shrink-0 object-contain" />
+                  )}
                   {t.n > 0 && <Badge color={t.color} />}
                 </strong>
                 <em className="mt-0.5 block truncate text-[13px] not-italic text-mute">
@@ -116,7 +120,7 @@ export default function MemberList({ members, page, total, onPage }) {
               <span className="truncate text-[13px] text-mute max-md:hidden">{m.location || "—"}</span>
               <div className="text-right">
                 <b className="block text-[15px] font-semibold tabular-nums">{fmt(m.points)}</b>
-                <small className="text-[11px]" style={{ color: t.color }}>{t.label}</small>
+                <small className="text-[11px]" style={{ color: staff ? "#1e1d29" : t.color }}>{staff?.name || t.label}</small>
               </div>
             </li>
           );

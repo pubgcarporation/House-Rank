@@ -16,6 +16,12 @@ export function tierOf(m) {
   return TIERS.find((t) => t.n === badgeTier(m?.badge)) || MEMBER;
 }
 
+export function staffBadge(m) {
+  const b = m?.profileBadge;
+  if (!b?.name || /Architect\s*Tier/i.test(b.name)) return null;
+  return b;
+}
+
 export function fmt(n) {
   return new Intl.NumberFormat("en-US").format(n || 0);
 }

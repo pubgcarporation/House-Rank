@@ -24,6 +24,7 @@ function all() {
         company: m.company,
         points: m.points,
         badge: m.badge || null,
+        profileBadge: m.profileBadge || null,
         rank: i + 1,
       })),
     };

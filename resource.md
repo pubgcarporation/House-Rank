@@ -1,0 +1,1 @@
+community.arc.io/api/graphql

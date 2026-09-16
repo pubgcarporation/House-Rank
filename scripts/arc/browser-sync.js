@@ -1,69 +1,33 @@
 /**
- * Arc people sync — AGGRESSIVE multi-strategy approach
- * Tries EVERY possible combination to capture all 62k users
+ * NEW-only discover + Architects club tag.
+ * Known DB ids are never counted as "added". API has no excludeIds — filter is client-side.
  *
- * npm run sync:server, open /home/people logged in:
- *   fetch('http://127.0.0.1:8787/sync.js?'+Date.now()).then(r=>r.text()).then(eval)
- *   await arcSync.syncAll()
+ * fetch('http://127.0.0.1:8787/sync.js?'+Date.now()).then(r=>r.text()).then(eval)
+ * await arcSync.syncNew()
+ * await arcSync.tagArchitects()
  */
 const TENANT = "688b1c42d1f8bff20fcac7a4";
+const ARCHITECTS = "690e4758cbbcfcd6133a2d31";
 const SAVE = "http://127.0.0.1:8787";
 const LIMIT = 100;
 const MAX_OFFSET = 2000;
 const WORKERS = 16;
-const PAGE_WORKERS = 6;
-const SAVE_EVERY = 200;
-
+const PAGE_WORKERS = 8;
+const SAVE_EVERY = 120;
+const AZ = "abcdefghijklmnopqrstuvwxyz".split("");
 const REGION_Q = "68d42a304c4d7c2e8f734a41";
 const SECTOR_Q = "695fd454b17ebea087385b49";
-const REGIONS = [
-  "North America",
-  "Latin America (LATAM)",
-  "Europe",
-  "Middle East or Africa",
-  "Asia-Pacific, Australia, New Zealand (APAC)",
-];
-const SECTORS = [
-  "DeFi",
-  "Borrowing and Lending",
-  "RWA",
-  "Privacy",
-  "Agentic Economy",
-  "Bridges and Interoperability",
-  "Treasury (settlement/clearing)",
-  "Payments",
-  "Exchanges and Trading",
-  "Wallets and Custody",
-  "Identity",
-  "Dev Tooling",
-  "Data and Infra",
-  "Governance",
-];
+const REGIONS = ["North America", "Latin America (LATAM)", "Europe", "Middle East or Africa", "Asia-Pacific, Australia, New Zealand (APAC)"];
+const SECTORS = ["DeFi", "Borrowing and Lending", "RWA", "Privacy", "Agentic Economy", "Bridges and Interoperability", "Treasury (settlement/clearing)", "Payments", "Exchanges and Trading", "Wallets and Custody", "Identity", "Dev Tooling", "Data and Infra", "Governance"];
 
-// All possible sort orders to try
-const SORT_ORDERS = ["DEFAULT", "RECENT", "ALPHABETICAL"];
-
-// Common countries to shard by
-const COUNTRIES = [
-  "United States", "United Kingdom", "Canada", "Australia", "Germany", "France",
-  "India", "Singapore", "Netherlands", "Switzerland", "Japan", "China",
-  "Brazil", "Mexico", "Spain", "Italy", "Sweden", "Denmark", "Norway",
-  "Argentina", "Chile", "Colombia", "United Arab Emirates", "South Africa",
-  "South Korea", "Hong Kong", "New Zealand", "Belgium", "Austria", "Portugal",
-  "Ireland", "Israel", "Poland", "Turkey", "Indonesia", "Thailand", "Vietnam",
-  "Philippines", "Malaysia", "Nigeria", "Kenya", "Egypt", "Pakistan"
-];
-
-function mapMember(r) {
+function mapMember(r, extra) {
   const company = typeof r.company === "string" ? r.company : r.company?.name || null;
   const profileBadge = r.profileBadge
-    ? {
-        id: r.profileBadge.id,
-        name: r.profileBadge.name,
-        pictureUrl: r.profileBadge.pictureUrl,
-        description: r.profileBadge.description || null,
-      }
+    ? { id: r.profileBadge.id, name: r.profileBadge.name, pictureUrl: r.profileBadge.pictureUrl, description: r.profileBadge.description || null }
     : null;
+  const badgeList = (r.contributionStatistics || [])
+    .filter((s) => s.countType === "Badge" && s.countSource)
+    .map((s) => ({ id: s.countSourceId, name: s.countSource.name, pictureUrl: s.countSource.pictureUrl, count: s.count }));
   return {
     id: r.id,
     userId: r.userId,
@@ -82,8 +46,10 @@ function mapMember(r) {
     points: r.totalContributionPoints || 0,
     badges: r.totalContributionBadgeCount || 0,
     role: r.role || null,
-    badge: profileBadge?.name || null,
+    badge: badgeList[0]?.name || profileBadge?.name || null,
+    badgeList,
     profileBadge,
+    ...(extra || {}),
   };
 }
 
@@ -123,7 +89,7 @@ async function mapPool(items, n, fn) {
   let i = 0;
   await Promise.all(
     Array.from({ length: Math.min(n, items.length || 1) }, async () => {
-      while (i < items.length && !window.__arcSyncAbort) {
+      while (i < items.length && !window.__arcAbort) {
         const idx = i++;
         await fn(items[idx], idx);
       }
@@ -131,221 +97,229 @@ async function mapPool(items, n, fn) {
   );
 }
 
-function generateShards() {
-  const shards = [];
-  
-  // Strategy 1: No filters with different sort orders
-  for (const sort of SORT_ORDERS) {
-    shards.push({ 
-      label: `sort:${sort}`, 
-      filters: [], 
-      locationFilters: {},
-      sort 
-    });
-  }
-  
-  // Strategy 2: Region filters with all sort orders
-  for (const region of REGIONS) {
-    for (const sort of SORT_ORDERS) {
-      shards.push({
-        label: `region:${region}:${sort}`,
-        filters: [{ questionId: REGION_Q, value: [region] }],
-        locationFilters: {},
-        sort
-      });
+async function page(client, queryDoc, vars) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await client.query({ query: queryDoc, variables: vars, fetchPolicy: "network-only" });
+      return r.data?.tenantUsers?.records || [];
+    } catch (e) {
+      if (/maximum offset/i.test(e.message || "")) return [];
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
     }
   }
-  
-  // Strategy 3: Sector filters with all sort orders
-  for (const sector of SECTORS) {
-    for (const sort of SORT_ORDERS) {
-      shards.push({
-        label: `sector:${sector}:${sort}`,
-        filters: [{ questionId: SECTOR_Q, value: [sector] }],
-        locationFilters: {},
-        sort
-      });
-    }
-  }
-  
-  // Strategy 4: Country-based sharding with DEFAULT sort
-  for (const country of COUNTRIES) {
-    shards.push({
-      label: `country:${country}`,
-      filters: [],
-      locationFilters: { countries: [country] },
-      sort: "DEFAULT"
-    });
-  }
-  
-  // Strategy 5: Region + Sector combinations (DEFAULT sort only to avoid explosion)
-  for (const region of REGIONS) {
-    for (const sector of SECTORS) {
-      shards.push({
-        label: `cross:${region}|${sector}`,
-        filters: [
-          { questionId: REGION_Q, value: [region] },
-          { questionId: SECTOR_Q, value: [sector] }
-        ],
-        locationFilters: {},
-        sort: "DEFAULT"
-      });
-    }
-  }
-  
-  console.log(`[arc-sync] generated ${shards.length} shards`);
-  return shards;
+  return [];
 }
 
-async function syncAll() {
-  window.__arcSyncAbort = false;
-  const { client, queryDoc } = getApollo();
-  const seen = new Set();
+function makePipeline(known) {
   const pending = [];
-  let dbTotal = 0;
+  let added = 0;
+  let tagged = 0;
+  let scanned = 0;
+  let dbTotal = known.size;
   let saving = Promise.resolve();
-  const t0 = performance.now();
 
-  async function flushSave(force) {
-    if (!pending.length) return;
-    if (!force && pending.length < SAVE_EVERY) return;
-    const chunk = pending.splice(0, pending.length);
+  async function flush(force) {
+    if (!pending.length || (!force && pending.length < SAVE_EVERY)) return;
+    const members = pending.splice(0, pending.length);
     saving = saving.then(async () => {
       const res = await fetch(SAVE + "/save", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ members: chunk }),
+        body: JSON.stringify({ members }),
       });
-      if (!res.ok) throw new Error("save " + res.status);
       const j = await res.json();
       dbTotal = j.total;
-      window.__arcProgress = { unique: seen.size, db: dbTotal };
-      console.log(`[arc-sync] save +${chunk.length} unique=${seen.size} db=${dbTotal}`);
+      console.log(`[arc] save batch=${members.length} fresh=${j.fresh} added=${added} db=${dbTotal}`);
     });
     await saving;
   }
 
-  function ingest(records) {
+  /** only NEW ids */
+  function ingestNew(records, extra) {
     let n = 0;
     for (const r of records) {
-      if (!r?.id || seen.has(r.id)) continue;
-      seen.add(r.id);
-      pending.push(mapMember(r));
+      scanned++;
+      if (!r?.id || known.has(r.id)) continue;
+      known.add(r.id);
+      pending.push(mapMember(r, extra));
       n++;
+      added++;
     }
     return n;
   }
 
-  async function page(base, shard, offset) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const r = await client.query({
-          query: queryDoc,
-          variables: {
-            ...base,
-            text: "",
-            profileQuestionFilters: shard.filters,
-            locationFilters: shard.locationFilters,
-            sort: shard.sort,
-            limit: LIMIT,
-            offset,
-          },
-          fetchPolicy: "network-only",
-        });
-        return r.data?.tenantUsers?.records || [];
-      } catch (e) {
-        if (/maximum offset/i.test(e.message || "")) return [];
-        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
-      }
+  /** update known + insert new (for club tagging) */
+  function ingestTag(records, extra) {
+    let nNew = 0;
+    for (const r of records) {
+      scanned++;
+      if (!r?.id) continue;
+      const isNew = !known.has(r.id);
+      if (isNew) {
+        known.add(r.id);
+        added++;
+        nNew++;
+      } else tagged++;
+      pending.push(mapMember(r, extra));
     }
-    return [];
+    return nNew;
   }
 
-  async function pullWindow(base, shard) {
-    const first = await page(base, shard, 0);
-    if (!first.length) return 0;
-    let added = ingest(first);
-    if (first.length < LIMIT) {
-      await flushSave(false);
-      return added;
-    }
-    const offsets = [];
-    for (let o = LIMIT; o <= MAX_OFFSET; o += LIMIT) offsets.push(o);
-    await mapPool(offsets, PAGE_WORKERS, async (offset) => {
-      const records = await page(base, shard, offset);
-      if (records.length) added += ingest(records);
-    });
-    await flushSave(false);
-    return added;
-  }
+  return {
+    flush,
+    ingestNew,
+    ingestTag,
+    stats: () => ({ added, tagged, scanned, dbTotal, known: known.size }),
+  };
+}
 
+function discoverJobs() {
   const passes = [
     { claimed: true, finishedOnboarding: true },
     { claimed: true, finishedOnboarding: false },
-    { claimed: false },
+    { claimed: false, finishedOnboarding: false },
   ];
-  const shards = generateShards();
-  console.log(`[arc-sync] workers=${WORKERS} shards=${shards.length} passes=${passes.length}`);
-  console.log(`[arc-sync] theoretical max: ${shards.length * passes.length * (MAX_OFFSET + LIMIT)} records`);
+  const out = [];
+  const digraphs = [];
+  for (const a of AZ) for (const b of AZ) digraphs.push(a + b);
 
   for (const pass of passes) {
-    if (window.__arcSyncAbort) break;
+    for (const text of ["", ...AZ]) {
+      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: false, label: `all:${text || "_"}` });
+      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: true, label: `on:${text || "_"}` });
+    }
+    for (const text of digraphs) {
+      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: false, label: `dg:${text}` });
+    }
+    for (const r of REGIONS) {
+      out.push({ clubId: null, sort: "DEFAULT", pass, text: "", filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 8)}` });
+      for (const a of AZ.slice(0, 12)) {
+        out.push({ clubId: null, sort: "DEFAULT", pass, text: a, filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 4)}:${a}` });
+      }
+    }
+    for (const s of SECTORS) {
+      out.push({ clubId: null, sort: "DEFAULT", pass, text: "", filters: [{ questionId: SECTOR_Q, value: [s] }], onlineOnly: false, label: `sc:${s.slice(0, 8)}` });
+    }
+  }
+  return out;
+}
+
+function clubJobs() {
+  const passes = [
+    { claimed: true, finishedOnboarding: true },
+    { claimed: true, finishedOnboarding: false },
+    { claimed: false, finishedOnboarding: false },
+  ];
+  const out = [];
+  const digraphs = [];
+  for (const a of AZ) for (const b of AZ) digraphs.push(a + b);
+  for (const pass of passes) {
+    for (const sort of ["JOIN_CLUB_DESC", "DEFAULT"]) {
+      for (const text of ["", ...AZ, ...digraphs]) {
+        out.push({ pass, sort, text, filters: [], label: `${sort}:${text || "_"}` });
+      }
+      for (const r of REGIONS) {
+        out.push({ pass, sort, text: "", filters: [{ questionId: REGION_Q, value: [r] }], label: `${sort}:rg:${r.slice(0, 6)}` });
+      }
+      for (const s of SECTORS) {
+        out.push({ pass, sort, text: "", filters: [{ questionId: SECTOR_Q, value: [s] }], label: `${sort}:sc:${s.slice(0, 6)}` });
+      }
+    }
+  }
+  return out;
+}
+
+async function pullWindow(client, queryDoc, base, ingest, flush) {
+  const first = await page(client, queryDoc, { ...base, limit: LIMIT, offset: 0 });
+  if (!first.length) return 0;
+  let n = ingest(first);
+  if (first.length < LIMIT) {
+    await flush(false);
+    return n;
+  }
+  const offsets = [];
+  for (let o = LIMIT; o <= MAX_OFFSET; o += LIMIT) offsets.push(o);
+  await mapPool(offsets, PAGE_WORKERS, async (offset) => {
+    const recs = await page(client, queryDoc, { ...base, limit: LIMIT, offset });
+    if (recs.length) n += ingest(recs);
+  });
+  await flush(false);
+  return n;
+}
+
+async function syncNew() {
+  window.__arcAbort = false;
+  const { client, queryDoc } = getApollo();
+  const known = new Set((await (await fetch(SAVE + "/ids")).json()).ids || []);
+  const start = known.size;
+  const pipe = makePipeline(known);
+  const t0 = performance.now();
+  const list = discoverJobs();
+  console.log(`[new] skip ${start} known | ${list.length} shards`);
+
+  await mapPool(list, WORKERS, async (job) => {
     const base = {
       tenantId: TENANT,
       bookmarked: false,
-      ...pass,
+      ...job.pass,
+      text: job.text,
+      profileQuestionFilters: job.filters,
+      locationFilters: {},
+      sort: job.sort,
     };
-    console.log("[arc-sync] pass", pass);
-    await mapPool(shards, WORKERS, async (shard) => {
-      const n = await pullWindow(base, shard);
-      if (n) console.log(`[arc-sync] ${shard.label} +${n} unique=${seen.size}`);
-      window.__arcProgress = { unique: seen.size, db: dbTotal, shard: shard.label, pass };
-    });
-    await flushSave(true);
-  }
-
-  await flushSave(true);
-  const res = await fetch(SAVE + "/flush", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: "{}",
+    if (job.onlineOnly) base.onlineOnly = true;
+    const n = await pullWindow(client, queryDoc, base, (recs) => pipe.ingestNew(recs), pipe.flush);
+    if (n) console.log(`[new] ${job.label} +${n}`);
+    window.__arcProgress = { mode: "new", ...pipe.stats(), shard: job.label };
   });
-  const j = await res.json();
-  const out = { count: seen.size, total: j.total, ms: Math.round(performance.now() - t0) };
-  console.log("[arc-sync] DONE", out);
+
+  await pipe.flush(true);
+  const j = await (await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+  const out = { ...pipe.stats(), db: j.total, skipped: start, ms: Math.round(performance.now() - t0) };
+  console.log("[new] DONE", out);
   window.__arcProgress = out;
   return out;
 }
 
-async function syncOne(id) {
+async function tagArchitects() {
+  window.__arcAbort = false;
   const { client, queryDoc } = getApollo();
-  const r = await client.query({
-    query: queryDoc,
-    variables: {
+  const known = new Set((await (await fetch(SAVE + "/ids")).json()).ids || []);
+  const start = known.size;
+  const pipe = makePipeline(known);
+  const t0 = performance.now();
+  const list = clubJobs();
+  console.log(`[arch] tag+discover ${list.length} shards | known=${start}`);
+
+  await mapPool(list, WORKERS, async (job) => {
+    const base = {
       tenantId: TENANT,
+      clubId: ARCHITECTS,
       bookmarked: false,
-      claimed: true,
-      finishedOnboarding: true,
-      text: "",
-      profileQuestionFilters: [],
+      ...job.pass,
+      text: job.text,
+      profileQuestionFilters: job.filters,
       locationFilters: {},
-      sort: "DEFAULT",
-      limit: 5,
-      offset: 0,
-      includeIds: [id],
-    },
-    fetchPolicy: "network-only",
+      sort: job.sort,
+    };
+    const n = await pullWindow(
+      client,
+      queryDoc,
+      base,
+      (recs) => pipe.ingestTag(recs, { clubs: ["architects"] }),
+      pipe.flush
+    );
+    if (n) console.log(`[arch] ${job.label} +${n} new`);
+    window.__arcProgress = { mode: "arch", ...pipe.stats(), shard: job.label };
   });
-  const members = (r.data?.tenantUsers?.records || []).map(mapMember);
-  if (!members.length) throw new Error("not found");
-  await fetch(SAVE + "/save", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ members }),
-  });
-  await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-  return members[0];
+
+  await pipe.flush(true);
+  const j = await (await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+  const out = { ...pipe.stats(), db: j.total, skipped: start, ms: Math.round(performance.now() - t0) };
+  console.log("[arch] DONE", out);
+  window.__arcProgress = out;
+  return out;
 }
 
-window.arcSync = { syncAll, syncOne };
-console.log("[arc-sync] ready (AGGRESSIVE multi-strategy: sorts + regions + sectors + countries + crosses)");
+window.arcSync = { syncNew, tagArchitects };
+console.log("[arc] ready — arcSync.syncNew() / arcSync.tagArchitects()");

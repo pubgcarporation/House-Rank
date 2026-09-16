@@ -68,6 +68,18 @@ http
         return res.end(String(load().size));
       }
 
+      if (req.method === "GET" && pathName === "/ids") {
+        return json(res, { ids: [...load().keys()] });
+      }
+
+      if (req.method === "POST" && pathName === "/newcount") {
+        const incoming = await readBody(req);
+        const map = load();
+        let fresh = 0;
+        for (const id of incoming.ids || []) if (id && !map.has(id)) fresh++;
+        return json(res, { checked: (incoming.ids || []).length, fresh });
+      }
+
       if (req.method === "GET" && (pathName === "/sync.js" || pathName === "/browser-sync.js")) {
         res.setHeader("content-type", "text/javascript; charset=utf-8");
         return res.end(fs.readFileSync(path.join(dir, "browser-sync.js")));
@@ -77,13 +89,17 @@ http
         const incoming = await readBody(req);
         const map = load();
         let upserted = 0;
+        let fresh = 0;
         for (const m of incoming.members || []) {
           if (!m?.id) continue;
-          map.set(m.id, { ...map.get(m.id), ...m });
+          const prev = map.get(m.id);
+          if (!prev) fresh++;
+          const clubs = [...new Set([...(prev?.clubs || []), ...(m.clubs || [])])];
+          map.set(m.id, { ...prev, ...m, clubs: clubs.length ? clubs : undefined });
           upserted++;
         }
         dirty = true;
-        return json(res, { ok: true, total: map.size, upserted, dirty });
+        return json(res, { ok: true, total: map.size, upserted, fresh, dirty });
       }
 
       if (req.method === "POST" && pathName === "/flush") {

@@ -9,6 +9,9 @@ export function mapMember(r) {
         description: r.profileBadge.description || null,
       }
     : null;
+  const badgeList = (r.contributionStatistics || [])
+    .filter((s) => s.countType === "Badge" && s.countSource)
+    .map((s) => ({ id: s.countSourceId, name: s.countSource.name, pictureUrl: s.countSource.pictureUrl, count: s.count }));
   return {
     id: r.id,
     userId: r.userId,
@@ -27,7 +30,8 @@ export function mapMember(r) {
     points: r.totalContributionPoints || 0,
     badges: r.totalContributionBadgeCount || 0,
     role: r.role || null,
-    badge: profileBadge?.name || null,
+    badge: badgeList[0]?.name || profileBadge?.name || null,
+    badgeList,
     profileBadge,
   };
 }

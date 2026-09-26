@@ -12,8 +12,17 @@ export function badgeTier(badge) {
   return Number((/Architect\s*Tier\s*(\d+)/i.exec(badge || "") || [])[1]) || 0;
 }
 
+function architectTierFromMember(m) {
+  const names = [m?.profileBadge?.name, m?.badge, ...(m?.badgeList || []).map((b) => b.name)];
+  for (const name of names) {
+    const n = badgeTier(name);
+    if (n) return n;
+  }
+  return 0;
+}
+
 export function tierOf(m) {
-  return TIERS.find((t) => t.n === badgeTier(m?.badge)) || MEMBER;
+  return TIERS.find((t) => t.n === architectTierFromMember(m)) || MEMBER;
 }
 
 export function staffBadge(m) {

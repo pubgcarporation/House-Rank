@@ -72,12 +72,10 @@ http
         return json(res, { ids: [...load().keys()] });
       }
 
-      if (req.method === "POST" && pathName === "/newcount") {
-        const incoming = await readBody(req);
-        const map = load();
-        let fresh = 0;
-        for (const id of incoming.ids || []) if (id && !map.has(id)) fresh++;
-        return json(res, { checked: (incoming.ids || []).length, fresh });
+      if (req.method === "GET" && pathName === "/people") {
+        return json(res, {
+          people: [...load().values()].map((m) => ({ id: m.id, name: m.name || "", nanoId: m.nanoId || null })),
+        });
       }
 
       if (req.method === "GET" && (pathName === "/sync.js" || pathName === "/browser-sync.js")) {

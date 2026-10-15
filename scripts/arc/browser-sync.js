@@ -1,26 +1,29 @@
 /**
- * NEW-only discover + Architects club tag.
- * Known DB ids are never counted as "added". API has no excludeIds — filter is client-side.
- *
  * fetch('http://127.0.0.1:8787/sync.js?'+Date.now()).then(r=>r.text()).then(eval)
- * await arcSync.syncNew()
- * await arcSync.tagArchitects()
+ * await arcSync.sync()        // add missing + refresh DB (one shard pass)
+ * await arcSync.syncNew()     // add unknown ids only
+ * await arcSync.refreshAll()  // refresh every DB id, leftover via nanoId
  */
 const TENANT = "688b1c42d1f8bff20fcac7a4";
-const ARCHITECTS = "690e4758cbbcfcd6133a2d31";
 const SAVE = "http://127.0.0.1:8787";
 const LIMIT = 100;
 const MAX_OFFSET = 2000;
 const WORKERS = 16;
 const PAGE_WORKERS = 8;
+const NANO_WORKERS = 32;
 const SAVE_EVERY = 120;
 const AZ = "abcdefghijklmnopqrstuvwxyz".split("");
 const REGION_Q = "68d42a304c4d7c2e8f734a41";
 const SECTOR_Q = "695fd454b17ebea087385b49";
 const REGIONS = ["North America", "Latin America (LATAM)", "Europe", "Middle East or Africa", "Asia-Pacific, Australia, New Zealand (APAC)"];
 const SECTORS = ["DeFi", "Borrowing and Lending", "RWA", "Privacy", "Agentic Economy", "Bridges and Interoperability", "Treasury (settlement/clearing)", "Payments", "Exchanges and Trading", "Wallets and Custody", "Identity", "Dev Tooling", "Data and Infra", "Governance"];
+const PASSES = [
+  { claimed: true, finishedOnboarding: true },
+  { claimed: true, finishedOnboarding: false },
+  { claimed: false, finishedOnboarding: false },
+];
 
-function mapMember(r, extra) {
+function mapMember(r) {
   const company = typeof r.company === "string" ? r.company : r.company?.name || null;
   const profileBadge = r.profileBadge
     ? { id: r.profileBadge.id, name: r.profileBadge.name, pictureUrl: r.profileBadge.pictureUrl, description: r.profileBadge.description || null }
@@ -49,7 +52,6 @@ function mapMember(r, extra) {
     badge: badgeList[0]?.name || profileBadge?.name || null,
     badgeList,
     profileBadge,
-    ...(extra || {}),
   };
 }
 
@@ -87,8 +89,10 @@ function getApollo() {
 
 async function mapPool(items, n, fn) {
   let i = 0;
+  const workers = Math.min(n, items.length);
+  if (!workers) return;
   await Promise.all(
-    Array.from({ length: Math.min(n, items.length || 1) }, async () => {
+    Array.from({ length: workers }, async () => {
       while (i < items.length && !window.__arcAbort) {
         const idx = i++;
         await fn(items[idx], idx);
@@ -98,6 +102,7 @@ async function mapPool(items, n, fn) {
 }
 
 async function page(client, queryDoc, vars) {
+  if (window.__arcAbort) return [];
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const r = await client.query({ query: queryDoc, variables: vars, fetchPolicy: "network-only" });
@@ -110,12 +115,42 @@ async function page(client, queryDoc, vars) {
   return [];
 }
 
+function jobVars(job) {
+  const v = {
+    tenantId: TENANT,
+    bookmarked: false,
+    ...job.pass,
+    text: job.text,
+    profileQuestionFilters: job.filters,
+    locationFilters: {},
+    sort: "DEFAULT",
+  };
+  if (job.onlineOnly) v.onlineOnly = true;
+  return v;
+}
+
+function searchVars(extra) {
+  return {
+    tenantId: TENANT,
+    bookmarked: false,
+    claimed: true,
+    finishedOnboarding: true,
+    text: "",
+    profileQuestionFilters: [],
+    locationFilters: {},
+    sort: "DEFAULT",
+    ...extra,
+  };
+}
+
 function makePipeline(known) {
   const pending = [];
   let added = 0;
   let tagged = 0;
   let scanned = 0;
+  let missed = 0;
   let dbTotal = known.size;
+  const queued = new Set();
   let saving = Promise.resolve();
 
   async function flush(force) {
@@ -129,101 +164,61 @@ function makePipeline(known) {
       });
       const j = await res.json();
       dbTotal = j.total;
-      console.log(`[arc] save batch=${members.length} fresh=${j.fresh} added=${added} db=${dbTotal}`);
+      console.log(`[arc] save batch=${members.length} fresh=${j.fresh} added=${added} tagged=${tagged} db=${dbTotal}`);
     });
     await saving;
   }
 
-  /** only NEW ids */
-  function ingestNew(records, extra) {
+  function ingest(records, mode) {
     let n = 0;
     for (const r of records) {
       scanned++;
-      if (!r?.id || known.has(r.id)) continue;
+      if (!r?.id || queued.has(r.id)) continue;
+      const isNew = !known.has(r.id);
+      if (mode === "new" && !isNew) continue;
+      if (mode === "refresh" && isNew) continue;
+      queued.add(r.id);
       known.add(r.id);
-      pending.push(mapMember(r, extra));
+      pending.push(mapMember(r));
       n++;
-      added++;
+      if (isNew) added++;
+      else tagged++;
     }
     return n;
   }
 
-  /** update known + insert new (for club tagging) */
-  function ingestTag(records, extra) {
-    let nNew = 0;
-    for (const r of records) {
-      scanned++;
-      if (!r?.id) continue;
-      const isNew = !known.has(r.id);
-      if (isNew) {
-        known.add(r.id);
-        added++;
-        nNew++;
-      } else tagged++;
-      pending.push(mapMember(r, extra));
-    }
-    return nNew;
-  }
-
   return {
     flush,
-    ingestNew,
-    ingestTag,
-    stats: () => ({ added, tagged, scanned, dbTotal, known: known.size }),
+    ingest,
+    miss: () => {
+      missed++;
+    },
+    queued,
+    stats: () => ({ added, tagged, unique: queued.size, scanned, missed, dbTotal, known: known.size }),
   };
 }
 
 function discoverJobs() {
-  const passes = [
-    { claimed: true, finishedOnboarding: true },
-    { claimed: true, finishedOnboarding: false },
-    { claimed: false, finishedOnboarding: false },
-  ];
   const out = [];
   const digraphs = [];
   for (const a of AZ) for (const b of AZ) digraphs.push(a + b);
 
-  for (const pass of passes) {
+  for (const pass of PASSES) {
     for (const text of ["", ...AZ]) {
-      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: false, label: `all:${text || "_"}` });
-      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: true, label: `on:${text || "_"}` });
+      out.push({ pass, text, filters: [], onlineOnly: false, label: `all:${text || "_"}` });
+      out.push({ pass, text, filters: [], onlineOnly: true, label: `on:${text || "_"}` });
     }
     for (const text of digraphs) {
-      out.push({ clubId: null, sort: "DEFAULT", pass, text, filters: [], onlineOnly: false, label: `dg:${text}` });
+      out.push({ pass, text, filters: [], onlineOnly: false, label: `dg:${text}` });
     }
     for (const r of REGIONS) {
-      out.push({ clubId: null, sort: "DEFAULT", pass, text: "", filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 8)}` });
+      out.push({ pass, text: "", filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 8)}` });
       for (const a of AZ.slice(0, 12)) {
-        out.push({ clubId: null, sort: "DEFAULT", pass, text: a, filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 4)}:${a}` });
+        out.push({ pass, text: a, filters: [{ questionId: REGION_Q, value: [r] }], onlineOnly: false, label: `rg:${r.slice(0, 4)}:${a}` });
       }
     }
     for (const s of SECTORS) {
-      out.push({ clubId: null, sort: "DEFAULT", pass, text: "", filters: [{ questionId: SECTOR_Q, value: [s] }], onlineOnly: false, label: `sc:${s.slice(0, 8)}` });
-    }
-  }
-  return out;
-}
-
-function clubJobs() {
-  const passes = [
-    { claimed: true, finishedOnboarding: true },
-    { claimed: true, finishedOnboarding: false },
-    { claimed: false, finishedOnboarding: false },
-  ];
-  const out = [];
-  const digraphs = [];
-  for (const a of AZ) for (const b of AZ) digraphs.push(a + b);
-  for (const pass of passes) {
-    for (const sort of ["JOIN_CLUB_DESC", "DEFAULT"]) {
-      for (const text of ["", ...AZ, ...digraphs]) {
-        out.push({ pass, sort, text, filters: [], label: `${sort}:${text || "_"}` });
-      }
-      for (const r of REGIONS) {
-        out.push({ pass, sort, text: "", filters: [{ questionId: REGION_Q, value: [r] }], label: `${sort}:rg:${r.slice(0, 6)}` });
-      }
-      for (const s of SECTORS) {
-        out.push({ pass, sort, text: "", filters: [{ questionId: SECTOR_Q, value: [s] }], label: `${sort}:sc:${s.slice(0, 6)}` });
-      }
+      out.push({ pass, text: "", filters: [{ questionId: SECTOR_Q, value: [s] }], onlineOnly: false, label: `sc:${s.slice(0, 8)}` });
     }
   }
   return out;
@@ -247,79 +242,59 @@ async function pullWindow(client, queryDoc, base, ingest, flush) {
   return n;
 }
 
-async function syncNew() {
+async function finish(pipe, start, t0, label) {
+  await pipe.flush(true);
+  const j = await (await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+  const out = { ...pipe.stats(), db: j.total, skipped: start, ms: Math.round(performance.now() - t0) };
+  console.log(`[${label}] DONE`, out);
+  window.__arcProgress = out;
+  return out;
+}
+
+async function run(mode) {
   window.__arcAbort = false;
   const { client, queryDoc } = getApollo();
-  const known = new Set((await (await fetch(SAVE + "/ids")).json()).ids || []);
+  const people = mode === "new" ? null : (await (await fetch(SAVE + "/people")).json()).people || [];
+  const known = new Set(people ? people.map((p) => p.id) : (await (await fetch(SAVE + "/ids")).json()).ids || []);
   const start = known.size;
   const pipe = makePipeline(known);
   const t0 = performance.now();
   const list = discoverJobs();
-  console.log(`[new] skip ${start} known | ${list.length} shards`);
+  console.log(`[${mode}] db=${start} shards=${list.length}`);
 
   await mapPool(list, WORKERS, async (job) => {
-    const base = {
-      tenantId: TENANT,
-      bookmarked: false,
-      ...job.pass,
-      text: job.text,
-      profileQuestionFilters: job.filters,
-      locationFilters: {},
-      sort: job.sort,
-    };
-    if (job.onlineOnly) base.onlineOnly = true;
-    const n = await pullWindow(client, queryDoc, base, (recs) => pipe.ingestNew(recs), pipe.flush);
-    if (n) console.log(`[new] ${job.label} +${n}`);
-    window.__arcProgress = { mode: "new", ...pipe.stats(), shard: job.label };
+    const n = await pullWindow(client, queryDoc, jobVars(job), (recs) => pipe.ingest(recs, mode), pipe.flush);
+    if (n) console.log(`[${mode}] ${job.label} +${n}`);
+    window.__arcProgress = { mode, ...pipe.stats(), shard: job.label };
   });
 
-  await pipe.flush(true);
-  const j = await (await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
-  const out = { ...pipe.stats(), db: j.total, skipped: start, ms: Math.round(performance.now() - t0) };
-  console.log("[new] DONE", out);
-  window.__arcProgress = out;
-  return out;
+  if (people) {
+    const left = people.filter((p) => !pipe.queued.has(p.id) && (p.nanoId || p.id));
+    console.log(`[${mode}] nanoId leftover ${left.length}`);
+    await mapPool(left, NANO_WORKERS, async (p, idx) => {
+      const recs = await page(client, queryDoc, searchVars({ text: p.nanoId || p.id, limit: 5, offset: 0 }));
+      const hit = recs.find((r) => r.id === p.id);
+      if (hit) pipe.ingest([hit], mode);
+      else pipe.miss();
+      await pipe.flush(false);
+      if (idx % 100 === 0) window.__arcProgress = { mode: `${mode}-nano`, ...pipe.stats(), at: idx, of: left.length };
+    });
+  }
+
+  return finish(pipe, start, t0, mode);
 }
 
-async function tagArchitects() {
-  window.__arcAbort = false;
-  const { client, queryDoc } = getApollo();
-  const known = new Set((await (await fetch(SAVE + "/ids")).json()).ids || []);
-  const start = known.size;
-  const pipe = makePipeline(known);
-  const t0 = performance.now();
-  const list = clubJobs();
-  console.log(`[arch] tag+discover ${list.length} shards | known=${start}`);
-
-  await mapPool(list, WORKERS, async (job) => {
-    const base = {
-      tenantId: TENANT,
-      clubId: ARCHITECTS,
-      bookmarked: false,
-      ...job.pass,
-      text: job.text,
-      profileQuestionFilters: job.filters,
-      locationFilters: {},
-      sort: job.sort,
-    };
-    const n = await pullWindow(
-      client,
-      queryDoc,
-      base,
-      (recs) => pipe.ingestTag(recs, { clubs: ["architects"] }),
-      pipe.flush
-    );
-    if (n) console.log(`[arch] ${job.label} +${n} new`);
-    window.__arcProgress = { mode: "arch", ...pipe.stats(), shard: job.label };
-  });
-
-  await pipe.flush(true);
-  const j = await (await fetch(SAVE + "/flush", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
-  const out = { ...pipe.stats(), db: j.total, skipped: start, ms: Math.round(performance.now() - t0) };
-  console.log("[arch] DONE", out);
-  window.__arcProgress = out;
-  return out;
+async function syncNew() {
+  return run("new");
 }
 
-window.arcSync = { syncNew, tagArchitects };
-console.log("[arc] ready — arcSync.syncNew() / arcSync.tagArchitects()");
+async function refreshAll() {
+  return run("refresh");
+}
+
+async function sync() {
+  return run("all");
+}
+
+window.arcSync = { sync, syncNew, refreshAll };
+console.log("[arc] ready — arcSync.sync() | arcSync.syncNew() | arcSync.refreshAll()");

@@ -7,6 +7,7 @@ import { withRanks } from "./map-member.mjs";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const file = path.join(dir, "../../src/data/members.json");
 const PORT = 8787;
+const SCRIPTS = { "/sync.js": "browser-sync.js", "/browser-sync.js": "browser-sync.js", "/mention.js": "mention-sync.js" };
 
 let cache = null;
 let dirty = false;
@@ -74,13 +75,13 @@ http
 
       if (req.method === "GET" && pathName === "/people") {
         return json(res, {
-          people: [...load().values()].map((m) => ({ id: m.id, name: m.name || "", nanoId: m.nanoId || null })),
+          people: [...load().values()].map((m) => ({ id: m.id, userId: m.userId || null, name: m.name || "", nanoId: m.nanoId || null })),
         });
       }
 
-      if (req.method === "GET" && (pathName === "/sync.js" || pathName === "/browser-sync.js")) {
+      if (req.method === "GET" && SCRIPTS[pathName]) {
         res.setHeader("content-type", "text/javascript; charset=utf-8");
-        return res.end(fs.readFileSync(path.join(dir, "browser-sync.js")));
+        return res.end(fs.readFileSync(path.join(dir, SCRIPTS[pathName])));
       }
 
       if (req.method === "POST" && pathName === "/save") {

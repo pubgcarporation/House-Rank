@@ -296,5 +296,5 @@ async function sync() {
   return run("all");
 }
 
-window.arcSync = { sync, syncNew, refreshAll };
+window.arcSync = { sync, syncNew, refreshAll, mapMember, getApollo };
 console.log("[arc] ready — arcSync.sync() | arcSync.syncNew() | arcSync.refreshAll()");

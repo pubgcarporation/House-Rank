@@ -6,11 +6,17 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "sync:server": "node scripts/arc/save-server.mjs"
+    "sync:server": "node scripts/arc/save-server.mjs",
+    "geo": "node --no-network-family-autoselection scripts/geo/geocode.mjs"
   },
   "dependencies": {
+    "flag-icons": "^7.5.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-globe.gl": "^2.38.0",
+    "three": "^0.186.1",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

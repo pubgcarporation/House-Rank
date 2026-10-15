@@ -26,22 +26,28 @@ export default function Filters({ q, setQ, tier, setTier, tiers }) {
     const close = (e) => {
       if (box.current && !box.current.contains(e.target)) setOpen(false);
     };
+    const esc = (e) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
   }, []);
 
   return (
     <div className="mb-10 flex items-center gap-2">
-      <label className="flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full bg-white px-4">
+      <label className="flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full bg-white px-4 focus-within:ring-2 focus-within:ring-acc/40">
         <SearchIcon />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search name, city, id"
+          aria-label="Search members"
           className="w-full bg-transparent text-[15px] text-ink outline-none placeholder:text-mute"
         />
         {q && (
-          <button type="button" onClick={() => setQ("")} className="cursor-pointer text-lg leading-none text-mute hover:text-ink">
+          <button type="button" aria-label="Clear search" onClick={() => setQ("")} className="cursor-pointer text-lg leading-none text-mute hover:text-ink">
             ×
           </button>
         )}
@@ -49,6 +55,8 @@ export default function Filters({ q, setQ, tier, setTier, tiers }) {
       <div ref={box} className="relative shrink-0">
         <button
           type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
           className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full px-4 text-sm text-white"
           style={{ background: cur.color }}
@@ -59,11 +67,13 @@ export default function Filters({ q, setQ, tier, setTier, tiers }) {
           </svg>
         </button>
         {open && (
-          <div className="absolute right-0 top-full z-20 mt-1.5 min-w-[180px] bg-white py-1 whitespace-nowrap">
+          <div role="listbox" className="absolute right-0 top-full z-20 mt-1.5 min-w-[180px] overflow-hidden rounded-2xl bg-white py-1 whitespace-nowrap shadow-[0_8px_24px_rgba(30,29,41,0.12)]">
             {opts.map((o) => (
               <button
                 key={o.id}
                 type="button"
+                role="option"
+                aria-selected={o.id === tier}
                 onClick={() => { setTier(o.id); setOpen(false); }}
                 className={`block w-full cursor-pointer px-3.5 py-2 text-left text-sm ${
                   o.id === tier ? "text-white" : "text-ink hover:bg-[#eef1f6]"

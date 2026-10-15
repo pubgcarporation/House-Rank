@@ -2,10 +2,13 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { tierOf } from "../src/lib/tiers.js";
+import { isoByName, norm } from "./countries.js";
 
-const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/data/members.json");
+const data = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/data");
+const file = path.join(data, "members.json");
 
 let cache = null;
+let spots = null;
 
 function all() {
   const mtime = fs.statSync(file).mtimeMs;
@@ -21,6 +24,9 @@ function all() {
         position: m.position,
         pictureUrl: m.pictureUrl,
         location: m.location,
+        city: m.city,
+        state: m.state,
+        country: m.country,
         company: m.company,
         points: m.points,
         badge: m.badge || null,
@@ -52,6 +58,30 @@ export function query({ q = "", tier = "all", offset = 0, limit = 100 }) {
   };
 }
 
+export function places() {
+  spots ??= JSON.parse(fs.readFileSync(path.join(data, "places.json"), "utf8"));
+  const groups = new Map();
+  const countries = new Map();
+  let located = 0;
+  for (const m of all()) {
+    const key = [m.city, m.state, m.country].map((v) => v || "").join("|");
+    const at = spots[key];
+    if (!at) continue;
+    const g = groups.get(key) || { lat: at[0], lng: at[1], n: 0, label: m.location || m.country };
+    g.n++;
+    groups.set(key, g);
+    countries.set(m.country, (countries.get(m.country) || 0) + 1);
+    located++;
+  }
+  return {
+    located,
+    places: [...groups.values()],
+    countries: [...countries]
+      .map(([country, n]) => ({ country, n, code: isoByName.get(norm(country))?.toLowerCase() }))
+      .sort((a, b) => b.n - a.n),
+  };
+}
+
 export function fromUrl(urlStr) {
   const url = new URL(urlStr, "http://localhost");
   return {
@@ -62,8 +92,14 @@ export function fromUrl(urlStr) {
   };
 }
 
+const routes = {
+  "/api/members": (url) => query(fromUrl(url)),
+  "/api/places": () => places(),
+};
+
 export function handleMembersApi(req, res, next) {
-  if (req.url.split("?")[0] !== "/api/members") return next();
+  const route = routes[req.url.split("?")[0]];
+  if (!route) return next();
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(query(fromUrl(req.url))));
+  res.end(JSON.stringify(route(req.url)));
 }

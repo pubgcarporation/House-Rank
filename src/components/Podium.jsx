@@ -31,13 +31,15 @@ export default function Podium({ members }) {
         return (
           <div key={m.id} className="flex w-40 min-w-0 flex-col items-center max-md:w-[30%]">
             <Face m={m} big={s.place === 1} />
-            <strong className="mt-2.5 flex w-full items-center justify-center gap-1 text-sm font-semibold">
-              <span className="truncate">{m.name}</span>
+            <strong className="mt-2.5 line-clamp-2 w-full break-words text-center text-sm font-semibold leading-tight max-md:text-[13px]">
+              {m.name}
+            </strong>
+            <span className="mt-1 flex items-center gap-1 text-xs tabular-nums" style={{ color: t.color }}>
+              {fmt(m.points)}
               {pin?.pictureUrl && (
                 <img src={pin.pictureUrl} alt="" title={pin.name} className="size-3.5 shrink-0 object-contain" />
               )}
-            </strong>
-            <span className="text-xs tabular-nums" style={{ color: t.color }}>{fmt(m.points)}</span>
+            </span>
             <div className="relative mt-5 w-[4.5rem] max-md:w-12">
               <span className={`absolute left-1/2 top-0 z-10 grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-xs font-semibold ${s.medal}`}>
                 {s.place}

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source not "./data";
 
 @theme {
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", sans-serif;
@@ -14,4 +15,11 @@ html, body, #root {
 }
 body {
   @apply bg-bg text-ink font-sans antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--color-acc);
+  outline-offset: 2px;
+}
+input:focus-visible {
+  outline: none;
 }

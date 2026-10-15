@@ -4,7 +4,10 @@
   "outputDirectory": "dist",
   "functions": {
     "api/members.js": {
-      "includeFiles": "src/data/members.json"
+      "includeFiles": "src/data/*.json"
+    },
+    "api/places.js": {
+      "includeFiles": "src/data/*.json"
     }
   }
 }

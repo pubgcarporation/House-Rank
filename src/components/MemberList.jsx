@@ -2,7 +2,7 @@ import { PAGE } from "@/lib/api";
 import { fmt, houseBadge, staffBadge, tierOf } from "@/lib/tiers";
 
 const row =
-  "grid grid-cols-[40px_44px_minmax(0,1.3fr)_minmax(0,1fr)_110px] items-center gap-4 max-md:grid-cols-[28px_36px_minmax(0,1fr)_auto] max-md:gap-2.5";
+  "grid grid-cols-[var(--rk,26px)_44px_minmax(0,1.3fr)_minmax(0,1fr)_110px] items-center gap-3.5 max-md:grid-cols-[var(--rk,26px)_36px_minmax(0,1fr)_auto] max-md:gap-2.5";
 
 function nums(cur, last) {
   const out = [];
@@ -26,19 +26,15 @@ function Pager({ page, total, onPage }) {
   const to = Math.min(page * PAGE, total);
   if (!total) return null;
   const btn = "grid size-8 place-items-center rounded-full text-[13px] tabular-nums";
+  const step = `${btn} cursor-pointer text-mute disabled:cursor-default disabled:opacity-25 hover:enabled:text-ink`;
   return (
-    <nav className="mt-10 flex items-center justify-between gap-4">
-      <span className="shrink-0 text-[13px] tabular-nums text-mute">
+    <nav aria-label="Pagination" className="mt-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 max-md:justify-center">
+      <span className="text-[13px] tabular-nums text-mute max-md:w-full max-md:text-center">
         {from}–{to} of {fmt(total)}
       </span>
       {last > 1 && (
         <div className="flex items-center gap-0.5 whitespace-nowrap">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => onPage(page - 1)}
-            className={`${btn} cursor-pointer text-mute disabled:cursor-default disabled:opacity-25 hover:enabled:text-ink`}
-          >
+          <button type="button" aria-label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)} className={step}>
             ‹
           </button>
           {nums(page, last).map((n, i) =>
@@ -48,21 +44,16 @@ function Pager({ page, total, onPage }) {
               <button
                 key={n}
                 type="button"
+                aria-label={`Page ${n}`}
+                aria-current={n === page ? "page" : undefined}
                 onClick={() => onPage(n)}
-                className={`${btn} cursor-pointer ${
-                  n === page ? "bg-ink text-white" : "text-mute hover:text-ink"
-                }`}
+                className={`${btn} cursor-pointer ${n === page ? "bg-ink text-white" : "text-mute hover:text-ink"}`}
               >
                 {n}
               </button>
             )
           )}
-          <button
-            type="button"
-            disabled={page >= last}
-            onClick={() => onPage(page + 1)}
-            className={`${btn} cursor-pointer text-mute disabled:cursor-default disabled:opacity-25 hover:enabled:text-ink`}
-          >
+          <button type="button" aria-label="Next page" disabled={page >= last} onClick={() => onPage(page + 1)} className={step}>
             ›
           </button>
         </div>
@@ -71,54 +62,90 @@ function Pager({ page, total, onPage }) {
   );
 }
 
-export default function MemberList({ members, page, total, onPage }) {
+function Skeleton() {
+  return Array.from({ length: 8 }, (_, i) => (
+    <li key={i} aria-hidden className={`${row} animate-pulse border-b border-line py-3.5`}>
+      <span className="h-3 w-4 rounded-full bg-line" />
+      <span className="size-10 rounded-full bg-line max-md:size-9" />
+      <div className="space-y-2">
+        <span className="block h-3.5 w-3/5 rounded-full bg-line" />
+        <span className="block h-3 w-4/5 rounded-full bg-line" />
+      </div>
+      <span className="h-3 w-3/4 rounded-full bg-line max-md:hidden" />
+      <span className="ml-auto h-3.5 w-14 rounded-full bg-line" />
+    </li>
+  ));
+}
+
+function Notice({ children }) {
+  return <li className="py-16 text-center text-[15px] text-mute">{children}</li>;
+}
+
+export default function MemberList({ members, page, total, onPage, error, onRetry, q }) {
+  const digits = members?.length ? String(Math.max(...members.map((m) => m.rank))).length : 3;
   return (
-    <>
+    <div style={{ "--rk": `${digits * 8.5}px` }}>
       <div className={`${row} border-b border-line pb-2 text-[11px] uppercase tracking-[0.08em] text-mute`}>
-        <span>#</span>
+        <span className="text-center">#</span>
         <span className="col-start-3">Member</span>
         <span className="max-md:hidden">Location</span>
         <span className="text-right">Points</span>
       </div>
       <ol>
-        {members.map((m) => {
-          const t = tierOf(m);
-          const staff = staffBadge(m);
-          const pin = houseBadge(m);
-          return (
-            <li key={m.id} className={`${row} border-b border-line py-3.5`}>
-              <span className={`text-[13px] tabular-nums ${m.rank <= 3 ? "font-semibold text-ink" : "text-mute"}`}>
-                {m.rank}
-              </span>
-              {m.pictureUrl ? (
-                <img src={m.pictureUrl} alt="" className="size-10 rounded-full object-cover max-md:size-9" />
-              ) : (
-                <span className="grid size-10 place-items-center rounded-full bg-line text-sm max-md:size-9">
-                  {(m.name || "?")[0]}
+        {error ? (
+          <Notice>
+            Couldn’t load members.{" "}
+            <button type="button" onClick={onRetry} className="cursor-pointer text-acc underline underline-offset-2">
+              Try again
+            </button>
+          </Notice>
+        ) : !members ? (
+          <Skeleton />
+        ) : members.length === 0 ? (
+          <Notice>{q ? `No members match “${q}”.` : "No members yet."}</Notice>
+        ) : (
+          members.map((m) => {
+            const t = tierOf(m);
+            const staff = staffBadge(m);
+            const pin = houseBadge(m);
+            return (
+              <li key={m.id} className={`${row} border-b border-line py-3.5 transition-colors hover:bg-black/[0.03]`}>
+                <span className={`text-center text-[13px] tabular-nums max-md:text-xs ${m.rank <= 3 ? "font-semibold text-ink" : "text-mute"}`}>
+                  {m.rank}
                 </span>
-              )}
-              <div className="min-w-0">
-                <strong className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
-                  <span className="truncate">{m.name}</span>
-                  {pin?.pictureUrl && (
-                    <img src={pin.pictureUrl} alt="" title={pin.name} className="size-4 shrink-0 object-contain" />
-                  )}
-                </strong>
-                <em className="mt-0.5 block truncate text-[13px] not-italic text-mute">
-                  {m.headline || m.position || "—"}
-                </em>
-                <span className="mt-0.5 block truncate text-[11px] text-mute/80">{m.id}</span>
-              </div>
-              <span className="truncate text-[13px] text-mute max-md:hidden">{m.location || "—"}</span>
-              <div className="text-right">
-                <b className="block text-[15px] font-semibold tabular-nums">{fmt(m.points)}</b>
-                <small className="text-[11px]" style={{ color: staff ? "#1e1d29" : t.color }}>{staff?.name || t.label}</small>
-              </div>
-            </li>
-          );
-        })}
+                {m.pictureUrl ? (
+                  <img src={m.pictureUrl} alt="" loading="lazy" className="size-10 rounded-full object-cover max-md:size-9" />
+                ) : (
+                  <span className="grid size-10 place-items-center rounded-full bg-line text-sm max-md:size-9">
+                    {(m.name || "?")[0]}
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <strong className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
+                    <span className="min-w-0 break-words max-md:line-clamp-2 md:truncate">{m.name}</span>
+                    {pin?.pictureUrl && (
+                      <img src={pin.pictureUrl} alt="" title={pin.name} className="size-4 shrink-0 object-contain" />
+                    )}
+                  </strong>
+                  <em className="mt-0.5 block truncate text-[13px] not-italic text-mute">
+                    {m.headline || m.position || "—"}
+                  </em>
+                  <span className="mt-0.5 block truncate text-[11px] text-mute/80 max-md:hidden">{m.id}</span>
+                  {m.location && <span className="mt-0.5 hidden truncate text-[11px] text-mute/80 max-md:block">{m.location}</span>}
+                </div>
+                <span className="truncate text-[13px] text-mute max-md:hidden">{m.location || "—"}</span>
+                <div className="text-right">
+                  <b className="block text-[15px] font-semibold tabular-nums">{fmt(m.points)}</b>
+                  <small className="whitespace-nowrap text-[11px]" style={{ color: staff ? "#1e1d29" : t.color }}>
+                    {staff?.name || t.label}
+                  </small>
+                </div>
+              </li>
+            );
+          })
+        )}
       </ol>
-      <Pager page={page} total={total} onPage={onPage} />
-    </>
+      {!error && members && <Pager page={page} total={total} onPage={onPage} />}
+    </div>
   );
 }

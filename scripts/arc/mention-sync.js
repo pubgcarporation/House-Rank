@@ -218,5 +218,40 @@ async function run() {
   return out;
 }
 
-window.arcMention = { run };
-console.log("[arc] ready — arcMention.run()");
+/** Refresh existing profiles by userId (direct detail lookup, no search). */
+async function refresh(userIds) {
+  window.__arcAbort = false;
+  const api = makeApi(getApollo().client);
+  const queue = [...userIds];
+  const batch = [];
+  const failed = [];
+  let done = 0;
+
+  const save = async () => {
+    if (batch.length) await post("/save", { members: batch.splice(0) });
+  };
+
+  await Promise.all(
+    Array.from({ length: RESOLVERS }, async () => {
+      while (queue.length && !window.__arcAbort) {
+        const userId = queue.shift();
+        const data = await api.call("GetTenantUserWithDetails", { tenantId: TENANT, userId, getExternalProfile: false });
+        if (data?.tenantUser) batch.push(mapMember(data.tenantUser));
+        else failed.push(userId);
+        done++;
+        if (batch.length >= SAVE_EVERY) await save();
+        window.__arcProgress = { mode: "refresh-id", done, of: userIds.length, failed: failed.length, limited: api.gate.limited };
+      }
+    })
+  );
+
+  await save();
+  await post("/flush", {});
+  const out = { done, of: userIds.length, failed };
+  console.log("[mention] refresh DONE", out.done, out.of, failed.length);
+  window.__arcProgress = out;
+  return out;
+}
+
+window.arcMention = { run, refresh };
+console.log("[arc] ready — arcMention.run() | arcMention.refresh(userIds)");
